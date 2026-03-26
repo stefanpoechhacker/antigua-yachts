@@ -5,7 +5,8 @@ import { WebSocket } from "undici";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const BBOX = [[[16.5, -62.5], [17.85, -61.2]]];
+// Temporarily global to test coverage — will narrow back to Antigua once confirmed working
+const BBOX = [[[-90, -180], [90, 180]]];
 
 export async function GET(request: Request) {
   const apiKey =
