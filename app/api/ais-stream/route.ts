@@ -1,12 +1,10 @@
-// AISStream explicitly blocks browser WebSocket connections.
-// This route proxies the WebSocket server-side and streams data to the
-// browser via Server-Sent Events (SSE) — a normal HTTP connection.
-import WebSocket from "ws";
+// Node.js 22+ has a built-in WebSocket global — no external package needed.
+// AISStream blocks browser connections, so we proxy server-side via SSE.
 
 export const runtime = "nodejs";
-export const maxDuration = 300; // Vercel Pro: up to 5 min per connection
+export const maxDuration = 300;
 
-const ANTIGUA_BBOX = [[[16.5, -62.5], [17.85, -61.2]]];
+const BBOX = [[[16.5, -62.5], [17.85, -61.2]]];
 
 export async function GET(request: Request) {
   const apiKey =
@@ -15,63 +13,81 @@ export async function GET(request: Request) {
     "";
 
   if (!apiKey) {
-    return new Response("Missing AISSTREAM_API_KEY", { status: 401 });
+    return new Response("data: {\"error\":\"Missing API key\"}\n\n", {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
   }
 
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     start(controller) {
-      const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
+      // Use native Node.js 22+ WebSocket (no import needed)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ws = new (globalThis as any).WebSocket(
+        "wss://stream.aisstream.io/v0/stream"
+      );
 
-      const send = (event: string, data: unknown) =>
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-        );
+      const send = (event: string, data: unknown) => {
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+          );
+        } catch { /* stream already closed */ }
+      };
 
-      ws.on("open", () => {
-        ws.send(
-          JSON.stringify({
-            APIKey: apiKey,
-            BoundingBoxes: ANTIGUA_BBOX,
-            FilterMessageTypes: [
-              "PositionReport",
-              "ShipStaticData",
-              "StandardClassBPositionReport",
-            ],
-          })
-        );
+      // Keep-alive ping every 20s to prevent proxy/CDN timeouts
+      const keepAlive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": ping\n\n"));
+        } catch {
+          clearInterval(keepAlive);
+        }
+      }, 20000);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          APIKey: apiKey,
+          BoundingBoxes: BBOX,
+          FilterMessageTypes: ["PositionReport", "ShipStaticData", "StandardClassBPositionReport"],
+        }));
         send("status", { connected: true });
-      });
+      };
 
-      ws.on("message", (raw: Buffer) => {
-        const str = raw.toString();
-        // Detect AISStream error messages and surface them as status events
+      ws.onmessage = (event: MessageEvent) => {
+        const str = typeof event.data === "string" ? event.data : String(event.data);
+        // Surface AISStream application errors
         if (str.includes('"error"')) {
           try {
             const parsed = JSON.parse(str) as { error?: string };
             if (parsed.error) {
               send("error", { message: parsed.error });
+              clearInterval(keepAlive);
               ws.close();
               return;
             }
-          } catch { /* not JSON error, forward normally */ }
+          } catch { /* not a plain error object, forward normally */ }
         }
-        controller.enqueue(encoder.encode(`data: ${str}\n\n`));
-      });
+        try {
+          controller.enqueue(encoder.encode(`data: ${str}\n\n`));
+        } catch { /* stream closed */ }
+      };
 
-      ws.on("error", (err: Error) => {
-        send("error", { message: err.message });
+      ws.onerror = (event: Event) => {
+        send("error", { message: String(event) });
+        clearInterval(keepAlive);
         try { controller.close(); } catch { /* already closed */ }
-      });
+      };
 
-      ws.on("close", (code: number, reason: Buffer) => {
-        send("status", { connected: false, code, reason: reason.toString() });
+      ws.onclose = (event: CloseEvent) => {
+        clearInterval(keepAlive);
+        send("status", { connected: false, code: event.code, reason: event.reason });
         try { controller.close(); } catch { /* already closed */ }
-      });
+      };
 
-      // Clean up when client disconnects
       request.signal.addEventListener("abort", () => {
+        clearInterval(keepAlive);
         ws.close();
         try { controller.close(); } catch { /* already closed */ }
       });
@@ -83,7 +99,7 @@ export async function GET(request: Request) {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       "Connection": "keep-alive",
-      "X-Accel-Buffering": "no", // Disable Nginx buffering on Vercel
+      "X-Accel-Buffering": "no",
     },
   });
 }
