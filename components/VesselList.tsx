@@ -20,7 +20,7 @@ interface Props {
 }
 
 export default function VesselList({ vessels, selectedMmsi, onSelectVessel }: Props) {
-  const [filter, setFilter] = useState<FilterMode>("yachts");
+  const [filter, setFilter] = useState<FilterMode>("all");
   const [search, setSearch] = useState("");
 
   const filtered = vessels
