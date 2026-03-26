@@ -31,7 +31,16 @@ export function useAISStream(apiKey: string) {
     const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
     wsRef.current = ws;
 
+    // Timeout if connection hangs for more than 10 seconds
+    const connectTimeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        setStatusDetail("Connection timed out — retrying...");
+        ws.close();
+      }
+    }, 10000);
+
     ws.onopen = () => {
+      clearTimeout(connectTimeout);
       if (!mountedRef.current) return;
       setStatus("connected");
       setStatusDetail("Sending API key...");
@@ -136,12 +145,14 @@ export function useAISStream(apiKey: string) {
     };
 
     ws.onerror = () => {
+      clearTimeout(connectTimeout);
       if (!mountedRef.current) return;
       setStatus("error");
       setStatusDetail("WebSocket error — check API key or network");
     };
 
     ws.onclose = (event) => {
+      clearTimeout(connectTimeout);
       if (!mountedRef.current) return;
       const openDuration = Date.now() - connectTimeRef.current;
       // If it closed within 2s of connecting, likely invalid API key
