@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["ws"],
+  serverExternalPackages: ["undici"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "photos.marinetraffic.com" },
