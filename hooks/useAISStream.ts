@@ -13,16 +13,20 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "er
 export function useAISStream(apiKey: string) {
   const [vessels, setVessels] = useState<Map<number, Vessel>>(new Map());
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
+  const [statusDetail, setStatusDetail] = useState<string>("");
   const [messageCount, setMessageCount] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const connectTimeRef = useRef<number>(0);
 
   const connect = useCallback(() => {
     if (!apiKey || apiKey === "your_api_key_here") return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     setStatus("connecting");
+    setStatusDetail("Connecting to AISStream...");
+    connectTimeRef.current = Date.now();
 
     const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
     wsRef.current = ws;
@@ -30,6 +34,7 @@ export function useAISStream(apiKey: string) {
     ws.onopen = () => {
       if (!mountedRef.current) return;
       setStatus("connected");
+      setStatusDetail("Sending API key...");
       ws.send(JSON.stringify({
         APIKey: apiKey,
         BoundingBoxes: ANTIGUA_BBOX,
@@ -44,7 +49,10 @@ export function useAISStream(apiKey: string) {
         const mmsi = data.MetaData?.MMSI;
         if (!mmsi) return;
 
-        setMessageCount((c) => c + 1);
+        setMessageCount((c) => {
+          if (c === 0) setStatusDetail("Receiving AIS data");
+          return c + 1;
+        });
 
         setVessels((prev) => {
           const next = new Map(prev);
@@ -130,12 +138,20 @@ export function useAISStream(apiKey: string) {
     ws.onerror = () => {
       if (!mountedRef.current) return;
       setStatus("error");
+      setStatusDetail("WebSocket error — check API key or network");
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (!mountedRef.current) return;
+      const openDuration = Date.now() - connectTimeRef.current;
+      // If it closed within 2s of connecting, likely invalid API key
+      const detail = event.code === 1008
+        ? "API key rejected"
+        : openDuration < 2000
+        ? `Closed quickly (code ${event.code}) — API key may be invalid`
+        : `Disconnected (code ${event.code}) — reconnecting in 5s`;
       setStatus("disconnected");
-      // Reconnect after 5 seconds
+      setStatusDetail(detail);
       reconnectTimer.current = setTimeout(() => {
         if (mountedRef.current) connect();
       }, 5000);
@@ -154,5 +170,5 @@ export function useAISStream(apiKey: string) {
 
   const vesselArray = Array.from(vessels.values()).filter((v) => v.position);
 
-  return { vessels: vesselArray, allVessels: vessels, status, messageCount };
+  return { vessels: vesselArray, allVessels: vessels, status, statusDetail, messageCount };
 }

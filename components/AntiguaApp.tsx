@@ -14,7 +14,7 @@ interface Props {
 }
 
 export default function AntiguaApp({ apiKey }: Props) {
-  const { vessels, status, messageCount } = useAISStream(apiKey);
+  const { vessels, status, statusDetail, messageCount } = useAISStream(apiKey);
   const [selectedMmsi, setSelectedMmsi] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -56,6 +56,9 @@ export default function AntiguaApp({ apiKey }: Props) {
               <span className="text-xs text-gray-600 ml-auto">{messageCount} signals</span>
             )}
           </div>
+          {statusDetail && status !== "connected" && (
+            <div className="mt-1 text-xs text-gray-600 leading-tight">{statusDetail}</div>
+          )}
         </div>
 
         {noKey ? (
