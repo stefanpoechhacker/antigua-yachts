@@ -12,6 +12,7 @@ export function useAISStream(_apiKey: string) {
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [statusDetail, setStatusDetail] = useState("Connecting to AISStream...");
   const [messageCount, setMessageCount] = useState(0);
+  const [wsMessageCount, setWsMessageCount] = useState(0);
   const esRef = useRef<EventSource | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -27,6 +28,14 @@ export function useAISStream(_apiKey: string) {
 
       const es = new EventSource("/api/ais-stream");
       esRef.current = es;
+
+      es.addEventListener("heartbeat", (e: MessageEvent) => {
+        if (!mountedRef.current) return;
+        try {
+          const { wsMessageCount: count } = JSON.parse(e.data as string);
+          setWsMessageCount(count);
+        } catch { /* ignore */ }
+      });
 
       es.addEventListener("status", (e: MessageEvent) => {
         if (!mountedRef.current) return;
@@ -161,5 +170,5 @@ export function useAISStream(_apiKey: string) {
   }, []);
 
   const vesselArray = Array.from(vessels.values()).filter((v) => v.position);
-  return { vessels: vesselArray, allVessels: vessels, status, statusDetail, messageCount };
+  return { vessels: vesselArray, allVessels: vessels, status, statusDetail, messageCount, wsMessageCount };
 }
