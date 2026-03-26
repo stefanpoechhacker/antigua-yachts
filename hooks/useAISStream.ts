@@ -15,6 +15,7 @@ export function useAISStream(_apiKey: string) {
   const esRef = useRef<EventSource | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const retryDelay = useRef(5000);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -22,7 +23,7 @@ export function useAISStream(_apiKey: string) {
     function connect() {
       if (!mountedRef.current) return;
       setStatus("connecting");
-      setStatusDetail("Connecting to AISStream...");
+      setStatusDetail(`Connecting to AISStream...`);
 
       const es = new EventSource("/api/ais-stream");
       esRef.current = es;
@@ -34,11 +35,13 @@ export function useAISStream(_apiKey: string) {
           if (connected) {
             setStatus("connected");
             setStatusDetail("Live — receiving AIS data");
+            retryDelay.current = 5000; // reset backoff on success
           } else {
             setStatus("disconnected");
-            setStatusDetail(`Disconnected (code ${code}${reason ? ": " + reason : ""}) — reconnecting`);
+            setStatusDetail(`Disconnected — reconnecting in ${retryDelay.current / 1000}s`);
             es.close();
-            reconnectTimer.current = setTimeout(connect, 5000);
+            reconnectTimer.current = setTimeout(connect, retryDelay.current);
+            retryDelay.current = Math.min(retryDelay.current * 2, 60000); // max 60s
           }
         } catch { /* ignore */ }
       });
@@ -48,7 +51,10 @@ export function useAISStream(_apiKey: string) {
         try {
           const { message } = JSON.parse(e.data as string);
           setStatus("error");
-          setStatusDetail(`Error: ${message}`);
+          setStatusDetail(`Error: ${message} — retrying in ${retryDelay.current / 1000}s`);
+          es.close();
+          reconnectTimer.current = setTimeout(connect, retryDelay.current);
+          retryDelay.current = Math.min(retryDelay.current * 2, 60000);
         } catch { /* ignore */ }
       });
 

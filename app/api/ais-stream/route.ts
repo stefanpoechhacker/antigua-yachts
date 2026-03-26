@@ -45,8 +45,19 @@ export async function GET(request: Request) {
       });
 
       ws.on("message", (raw: Buffer) => {
-        // Forward raw AIS JSON directly to client
-        controller.enqueue(encoder.encode(`data: ${raw.toString()}\n\n`));
+        const str = raw.toString();
+        // Detect AISStream error messages and surface them as status events
+        if (str.includes('"error"')) {
+          try {
+            const parsed = JSON.parse(str) as { error?: string };
+            if (parsed.error) {
+              send("error", { message: parsed.error });
+              ws.close();
+              return;
+            }
+          } catch { /* not JSON error, forward normally */ }
+        }
+        controller.enqueue(encoder.encode(`data: ${str}\n\n`));
       });
 
       ws.on("error", (err: Error) => {
