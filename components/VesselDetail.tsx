@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Vessel } from "@/lib/types";
 import {
   NAV_STATUS,
@@ -199,7 +200,7 @@ function StatCard({
   value,
   highlight,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string;
   highlight?: boolean;
