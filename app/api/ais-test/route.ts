@@ -1,90 +1,95 @@
 import WebSocket from "ws";
+import { IncomingMessage } from "http";
 
 export const runtime = "nodejs";
-export const maxDuration = 15;
+export const maxDuration = 20;
 
-async function testConnection(
-  apiKey: string,
+function probe(
   label: string,
-  opts: ConstructorParameters<typeof WebSocket>[1] = {}
+  sendFn?: (ws: InstanceType<typeof WebSocket>) => void,
+  headers?: Record<string, string>
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
-    const result: Record<string, unknown> = { label };
+    const r: Record<string, unknown> = { label };
+    const ws = new WebSocket("wss://stream.aisstream.io/v0/stream", { headers });
+    const t0 = Date.now();
 
-    const ws = new WebSocket("wss://stream.aisstream.io/v0/stream", opts);
+    const done = (outcome: string) => {
+      clearTimeout(timer);
+      r.ms = Date.now() - t0;
+      r.outcome = outcome;
+      resolve(r);
+    };
 
-    const timeout = setTimeout(() => {
-      result.outcome = "timeout";
+    const timer = setTimeout(() => {
       ws.terminate();
-      resolve(result);
+      done("timeout_8s");
     }, 8000);
 
+    ws.on("unexpected-response", (_: unknown, res: IncomingMessage) => {
+      r.httpStatus = res.statusCode;
+      r.httpHeaders = res.headers;
+      done("http_rejection");
+    });
+
     ws.on("open", () => {
-      result.opened = true;
-      ws.send(
-        JSON.stringify({
-          APIKey: apiKey,
-          BoundingBoxes: [[[-90, -180], [90, 180]]], // global bbox — simpler test
-          FilterMessageTypes: ["PositionReport"],
-        })
-      );
+      r.opened = true;
+      r.openedAt = Date.now() - t0 + "ms";
+      if (sendFn) sendFn(ws);
     });
 
-    ws.on("message", (data: Buffer) => {
-      clearTimeout(timeout);
-      result.outcome = "success";
-      result.preview = data.toString().slice(0, 200);
+    ws.on("message", (d: Buffer) => {
+      r.firstMsg = d.toString().slice(0, 300);
       ws.close();
-      resolve(result);
+      done("success");
     });
 
-    ws.on("error", (err: Error) => {
-      result.error = err.message;
-      result.errorCode = (err as NodeJS.ErrnoException).code;
+    ws.on("error", (e: Error) => {
+      r.error = e.message;
+      r.code = (e as NodeJS.ErrnoException).code;
     });
 
     ws.on("close", (code: number, reason: Buffer) => {
-      clearTimeout(timeout);
-      if (!result.outcome) {
-        result.outcome = "closed_no_message";
-        result.closeCode = code;
-        result.closeReason = reason.toString() || "(none)";
-      }
-      resolve(result);
+      if (r.outcome) return;
+      r.closeCode = code;
+      r.closeReason = reason.toString() || "(empty)";
+      done("closed");
     });
   });
 }
 
 export async function GET() {
-  const apiKey =
+  const key =
     process.env.NEXT_PUBLIC_AISSTREAM_API_KEY ??
     process.env.AISSTREAM_API_KEY ??
     "(missing)";
 
-  // Run 3 variations in sequence to find what works
-  const [plain, withOrigin, withBrowserHeaders] = await Promise.all([
-    // Test 1: plain connection (no extra headers)
-    testConnection(apiKey, "plain"),
+  const sub = JSON.stringify({
+    APIKey: key,
+    BoundingBoxes: [[[-90, -180], [90, 180]]],
+    FilterMessageTypes: ["PositionReport"],
+  });
 
-    // Test 2: with Origin header (some servers require it)
-    testConnection(apiKey, "with_origin_header", {
-      headers: { Origin: "https://aisstream.io" },
-    }),
+  const [noSend, withSub, wrongJson, withOrigin] = await Promise.all([
+    // 1. Open but never send — does server wait or drop immediately?
+    probe("open_no_send"),
 
-    // Test 3: with browser-like headers
-    testConnection(apiKey, "with_browser_headers", {
-      headers: {
-        Origin: "https://aisstream.io",
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-      },
+    // 2. Open + send valid subscription
+    probe("open_with_sub", (ws) => ws.send(sub)),
+
+    // 3. Open + send garbage JSON — what error does server return?
+    probe("open_bad_json", (ws) => ws.send("not json")),
+
+    // 4. Open + sub + Origin header
+    probe("open_with_origin", (ws) => ws.send(sub), {
+      Origin: "https://aisstream.io",
     }),
   ]);
 
   return Response.json({
-    apiKeyPresent: apiKey !== "(missing)",
-    apiKeyPrefix: apiKey.slice(0, 8) + "...",
-    timestamp: new Date().toISOString(),
-    tests: [plain, withOrigin, withBrowserHeaders],
+    keyPrefix: key.slice(0, 8) + "...",
+    keyPresent: key !== "(missing)",
+    nodeVersion: process.version,
+    tests: [noSend, withSub, wrongJson, withOrigin],
   });
 }
