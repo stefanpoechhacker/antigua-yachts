@@ -44,7 +44,7 @@ const MID_TO_FLAG: Record<number, [string, string]> = {
 
 export function getFlagFromMMSI(mmsi: number): [string, string] {
   const mid = Math.floor(mmsi / 1_000_000);
-  return MID_TO_FLAG[mid] ?? ["Unknown", "🏴"];
+  return MID_TO_FLAG[mid] ?? (["Unknown", "🏴"] as [string, string]);
 }
 
 export const NAV_STATUS: Record<number, string> = {

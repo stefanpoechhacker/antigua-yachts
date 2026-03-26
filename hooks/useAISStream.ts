@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { Vessel, AISStreamMessage } from "@/lib/types";
-import { getFlagFromMMSI, getShipTypeLabel } from "@/lib/vessel-utils";
+import { getFlagFromMMSI } from "@/lib/vessel-utils";
 import { findFamousYacht } from "@/lib/famous-yachts";
 
 // Antigua & Barbuda bounding box (expanded to catch approaching vessels)
@@ -48,7 +48,7 @@ export function useAISStream(apiKey: string) {
 
         setVessels((prev) => {
           const next = new Map(prev);
-          const existing = next.get(mmsi) ?? { mmsi, lastSeen: data.MetaData.time_utc };
+          const existing: Vessel = next.get(mmsi) ?? { mmsi, lastSeen: data.MetaData.time_utc };
 
           if (data.MessageType === "PositionReport" || data.MessageType === "StandardClassBPositionReport") {
             const pos = data.Message.PositionReport;
